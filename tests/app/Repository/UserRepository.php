@@ -42,174 +42,148 @@ class UserRepository extends BaseRepository
     }
 
     public function createOrUpdate($id = null, $request)
-    { 
-        $model = is_null($id) ? new User : User::findOrFail($id);
-        $model->user_type = $request['role'];
-        $model->name = $request['name'];
-        $model->company_id = $request['company_id'] != '' ? $request['company_id'] : 0;
-        $model->department_id = $request['department_id'] != '' ? $request['department_id'] : 0;
-        $model->email = $request['email'];
-        $model->dob_or_orgid = $request['dob_or_orgid'];
-        $model->phone = $request['phone'];
-        $model->mobile = $request['mobile'];
+    {
+        $model = $id ? User::findOrFail($id) : new User;
 
+        $model->fill([
+            'user_type' => $request['role'],
+            'name' => $request['name'],
+            'company_id' => $request['company_id'] ?: 0,
+            'department_id' => $request['department_id'] ?: 0,
+            'email' => $request['email'],
+            'dob_or_orgid' => $request['dob_or_orgid'],
+            'phone' => $request['phone'],
+            'mobile' => $request['mobile'],
+        ]);
 
-        if (!$id || $id && $request['password']) $model->password = bcrypt($request['password']);
+        if (!$id || $request['password']) {
+            $model->password = bcrypt($request['password']);
+        }
+
         $model->detachAllRoles();
         $model->save();
         $model->attachRole($request['role']);
-        $data = array();
 
         if ($request['role'] == env('CUSTOMER_ROLE_ID')) {
-
-            if($request['consumer_type'] == 'paid')
-            {
-                if($request['company_id'] == '')
-                {
-                    $type = Type::where('code', 'paid')->first();
-                    $company = Company::create(['name' => $request['name'], 'type_id' => $type->id, 'additional_info' => 'Created automatically for user ' . $model->id]);
-                    $department = Department::create(['name' => $request['name'], 'company_id' => $company->id, 'additional_info' => 'Created automatically for user ' . $model->id]);
-
-                    $model->company_id = $company->id;
-                    $model->department_id = $department->id;
-                    $model->save();
-                }
-            }
-
-            $user_meta = UserMeta::firstOrCreate(['user_id' => $model->id]);
-            $old_meta = $user_meta->toArray();
-            $user_meta->consumer_type = $request['consumer_type'];
-            $user_meta->customer_type = $request['customer_type'];
-            $user_meta->username = $request['username'];
-            $user_meta->post_code = $request['post_code'];
-            $user_meta->address = $request['address'];
-            $user_meta->city = $request['city'];
-            $user_meta->town = $request['town'];
-            $user_meta->country = $request['country'];
-            $user_meta->reference = (isset($request['reference']) && $request['reference'] == 'yes') ? '1' : '0';
-            $user_meta->additional_info = $request['additional_info'];
-            $user_meta->cost_place = isset($request['cost_place']) ? $request['cost_place'] : '';
-            $user_meta->fee = isset($request['fee']) ? $request['fee'] : '';
-            $user_meta->time_to_charge = isset($request['time_to_charge']) ? $request['time_to_charge'] : '';
-            $user_meta->time_to_pay = isset($request['time_to_pay']) ? $request['time_to_pay'] : '';
-            $user_meta->charge_ob = isset($request['charge_ob']) ? $request['charge_ob'] : '';
-            $user_meta->customer_id = isset($request['customer_id']) ? $request['customer_id'] : '';
-            $user_meta->charge_km = isset($request['charge_km']) ? $request['charge_km'] : '';
-            $user_meta->maximum_km = isset($request['maximum_km']) ? $request['maximum_km'] : '';
-            $user_meta->save();
-            $new_meta = $user_meta->toArray();
-
-            $blacklistUpdated = [];
-            $userBlacklist = UsersBlacklist::where('user_id', $id)->get();
-            $userTranslId = collect($userBlacklist)->pluck('translator_id')->all();
-
-            $diff = null;
-            if ($request['translator_ex']) {
-                $diff = array_intersect($userTranslId, $request['translator_ex']);
-            }
-            if ($diff || $request['translator_ex']) {
-                foreach ($request['translator_ex'] as $translatorId) {
-                    $blacklist = new UsersBlacklist();
-                    if ($model->id) {
-                        $already_exist = UsersBlacklist::translatorExist($model->id, $translatorId);
-                        if ($already_exist == 0) {
-                            $blacklist->user_id = $model->id;
-                            $blacklist->translator_id = $translatorId;
-                            $blacklist->save();
-                        }
-                        $blacklistUpdated [] = $translatorId;
-                    }
-
-                }
-                if ($blacklistUpdated) {
-                    UsersBlacklist::deleteFromBlacklist($model->id, $blacklistUpdated);
-                }
-            } else {
-                UsersBlacklist::where('user_id', $model->id)->delete();
-            }
-
-
-        } else if ($request['role'] == env('TRANSLATOR_ROLE_ID')) {
-
-            $user_meta = UserMeta::firstOrCreate(['user_id' => $model->id]);
-
-            $user_meta->translator_type = $request['translator_type'];
-            $user_meta->worked_for = $request['worked_for'];
-            if ($request['worked_for'] == 'yes') {
-                $user_meta->organization_number = $request['organization_number'];
-            }
-            $user_meta->gender = $request['gender'];
-            $user_meta->translator_level = $request['translator_level'];
-            $user_meta->additional_info = $request['additional_info'];
-            $user_meta->post_code = $request['post_code'];
-            $user_meta->address = $request['address'];
-            $user_meta->address_2 = $request['address_2'];
-            $user_meta->town = $request['town'];
-            $user_meta->save();
-
-            $data['translator_type'] = $request['translator_type'];
-            $data['worked_for'] = $request['worked_for'];
-            if ($request['worked_for'] == 'yes') {
-                $data['organization_number'] = $request['organization_number'];
-            }
-            $data['gender'] = $request['gender'];
-            $data['translator_level'] = $request['translator_level'];
-
-            $langidUpdated = [];
-            if ($request['user_language']) {
-                foreach ($request['user_language'] as $langId) {
-                    $userLang = new UserLanguages();
-                    $already_exit = $userLang::langExist($model->id, $langId);
-                    if ($already_exit == 0) {
-                        $userLang->user_id = $model->id;
-                        $userLang->lang_id = $langId;
-                        $userLang->save();
-                    }
-                    $langidUpdated[] = $langId;
-
-                }
-                if ($langidUpdated) {
-                    $userLang::deleteLang($model->id, $langidUpdated);
-                }
-            }
-
+            $this->handleCustomer($model, $request);
         }
 
-        if ($request['new_towns']) {
-
-            $towns = new Town;
-            $towns->townname = $request['new_towns'];
-            $towns->save();
-            $newTownsId = $towns->id;
+        if ($request['role'] == env('TRANSLATOR_ROLE_ID')) {
+            $this->handleTranslator($model, $request);
         }
 
-        $townidUpdated = [];
-        if ($request['user_towns_projects']) {
-            $del = DB::table('user_towns')->where('user_id', '=', $model->id)->delete();
-            foreach ($request['user_towns_projects'] as $townId) {
-                $userTown = new UserTowns();
-                $already_exit = $userTown::townExist($model->id, $townId);
-                if ($already_exit == 0) {
-                    $userTown->user_id = $model->id;
-                    $userTown->town_id = $townId;
-                    $userTown->save();
-                }
-                $townidUpdated[] = $townId;
-
-            }
+        // Handle user towns
+        if (!empty($request['new_towns'])) {
+            $this->createNewTown($request['new_towns']);
         }
 
-        if ($request['status'] == '1') {
-            if ($model->status != '1') {
-                $this->enable($model->id);
-            }
-        } else {
-            if ($model->status != '0') {
-                $this->disable($model->id);
-            }
+        if (!empty($request['user_towns_projects'])) {
+            $this->updateUserTowns($model->id, $request['user_towns_projects']);
         }
-        return $model ? $model : false;
+
+        // Update user status
+        $this->updateUserStatus($model, $request['status']);
+
+        return $model;
     }
+
+    private function handleCustomer($model, $request)
+    {
+        if ($request['consumer_type'] == 'paid' && empty($request['company_id'])) {
+            $type = Type::where('code', 'paid')->first();
+            $company = Company::create([
+                'name' => $request['name'],
+                'type_id' => $type->id,
+                'additional_info' => "Created automatically for user {$model->id}",
+            ]);
+            $department = Department::create([
+                'name' => $request['name'],
+                'company_id' => $company->id,
+                'additional_info' => "Created automatically for user {$model->id}",
+            ]);
+
+            $model->update(['company_id' => $company->id, 'department_id' => $department->id]);
+        }
+
+        $user_meta = UserMeta::updateOrCreate(
+            ['user_id' => $model->id],
+            array_merge($request->only([
+                'consumer_type', 'customer_type', 'username', 'post_code', 'address',
+                'city', 'town', 'country', 'additional_info', 'cost_place', 'fee',
+                'time_to_charge', 'time_to_pay', 'charge_ob', 'customer_id',
+                'charge_km', 'maximum_km'
+            ]), [
+                'reference' => isset($request['reference']) && $request['reference'] == 'yes' ? '1' : '0',
+            ])
+        );
+
+        $this->updateBlacklist($model->id, $request['translator_ex']);
+    }
+
+    private function handleTranslator($model, $request)
+    {
+        $user_meta = UserMeta::updateOrCreate(
+            ['user_id' => $model->id],
+            $request->only([
+                'translator_type', 'worked_for', 'gender', 'translator_level',
+                'additional_info', 'post_code', 'address', 'address_2', 'town'
+            ])
+        );
+
+        if ($request['worked_for'] == 'yes') {
+            $user_meta->update(['organization_number' => $request['organization_number']]);
+        }
+
+        if (!empty($request['user_language'])) {
+            $this->updateUserLanguages($model->id, $request['user_language']);
+        }
+    }
+
+    private function updateBlacklist($user_id, $translator_ex)
+    {
+        $existingBlacklist = UsersBlacklist::where('user_id', $user_id)->pluck('translator_id')->toArray();
+        $newBlacklist = array_diff($translator_ex ?? [], $existingBlacklist);
+
+        foreach ($newBlacklist as $translatorId) {
+            UsersBlacklist::create(['user_id' => $user_id, 'translator_id' => $translatorId]);
+        }
+
+        $toDelete = array_diff($existingBlacklist, $translator_ex ?? []);
+        UsersBlacklist::where('user_id', $user_id)->whereIn('translator_id', $toDelete)->delete();
+    }
+
+    private function updateUserLanguages($user_id, $user_languages)
+    {
+        UserLanguages::where('user_id', $user_id)->delete();
+
+        foreach ($user_languages as $langId) {
+            UserLanguages::firstOrCreate(['user_id' => $user_id, 'lang_id' => $langId]);
+        }
+    }
+
+    private function createNewTown($town_name)
+    {
+        Town::create(['townname' => $town_name]);
+    }
+
+    private function updateUserTowns($user_id, $user_towns)
+    {
+        DB::table('user_towns')->where('user_id', $user_id)->delete();
+
+        foreach ($user_towns as $townId) {
+            UserTowns::firstOrCreate(['user_id' => $user_id, 'town_id' => $townId]);
+        }
+    }
+
+    private function updateUserStatus($model, $status)
+    {
+        if ($status == '1' && $model->status != '1') {
+            $this->enable($model->id);
+        } elseif ($status == '0' && $model->status != '0') {
+            $this->disable($model->id);
+        }
+    }
+
 
     public function enable($id)
     {
@@ -231,5 +205,5 @@ class UserRepository extends BaseRepository
     {
         return User::where('user_type', 2)->get();
     }
-    
+
 }

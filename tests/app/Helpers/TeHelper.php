@@ -45,12 +45,15 @@ class TeHelper
         $due_time = Carbon::parse($due_time);
         $created_at = Carbon::parse($created_at);
 
+        if ($due_time->lessThanOrEqualTo($created_at)) {
+            throw new \InvalidArgumentException('Due time must be after creation time.');
+        }
+
         $difference = $due_time->diffInHours($created_at);
 
-
-        if($difference <= 90)
+        if ($difference <= 1.5) {  // 90 minutes is 1.5 hours
             $time = $due_time;
-        elseif ($difference <= 24) {
+        } elseif ($difference <= 24) {
             $time = $created_at->addMinutes(90);
         } elseif ($difference > 24 && $difference <= 72) {
             $time = $created_at->addHours(16);
@@ -59,7 +62,6 @@ class TeHelper
         }
 
         return $time->format('Y-m-d H:i:s');
-
     }
 
 }

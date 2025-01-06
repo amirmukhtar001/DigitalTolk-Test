@@ -41,13 +41,13 @@ class BookingRepository extends BaseRepository
     /**
      * @param Job $model
      */
-    function __construct(Job $model, MailerInterface $mailer)
+    function __construct(Job $model, MailerInterface $mailer)   
     {
         parent::__construct($model);
         $this->mailer = $mailer;
         $this->logger = new Logger('admin_logger');
 
-        $this->logger->pushHandler(new StreamHandler(storage_path('logs/admin/laravel-' . date('Y-m-d') . '.log'), Logger::DEBUG));
+        $this->logger->pushHandler(new StreamHandler(storage_path('logs/admin/laravel-' . date('Y-m-d') . '.log'), Logger::DEBUG)); //Instead of hardcoding the log path, it should be use configuration files or environment variables to allow flexibility in deployment environments.
         $this->logger->pushHandler(new FirePHPHandler());
     }
 
@@ -64,7 +64,7 @@ class BookingRepository extends BaseRepository
         if ($cuser && $cuser->is('customer')) {
             $jobs = $cuser->jobs()->with('user.userMeta', 'user.average', 'translatorJobRel.user.average', 'language', 'feedback')->whereIn('status', ['pending', 'assigned', 'started'])->orderBy('due', 'asc')->get();
             $usertype = 'customer';
-        } elseif ($cuser && $cuser->is('translator')) {
+        } elseif ($cuser && $cuser->is('translator')) { //Instead of hardcoding customer and translator, consider an enum or constant for user roles.
             $jobs = Job::getTranslatorJobs($cuser->id, 'new');
             $jobs = $jobs->pluck('jobs')->all();
             $usertype = 'translator';
@@ -77,7 +77,7 @@ class BookingRepository extends BaseRepository
                     $noramlJobs[] = $jobitem;
                 }
             }
-            $noramlJobs = collect($noramlJobs)->each(function ($item, $key) use ($user_id) {
+            $noramlJobs = collect($noramlJobs)->each(function ($item, $key) use ($user_id) { //The variable $noramlJobs has a typo. It should be $normalJobs
                 $item['usercheck'] = Job::checkParticularJob($user_id, $item);
             })->sortBy('due')->all();
         }
@@ -103,6 +103,7 @@ class BookingRepository extends BaseRepository
         $noramlJobs = array();
         if ($cuser && $cuser->is('customer')) {
             $jobs = $cuser->jobs()->with('user.userMeta', 'user.average', 'translatorJobRel.user.average', 'language', 'feedback', 'distance')->whereIn('status', ['completed', 'withdrawbefore24', 'withdrawafter24', 'timedout'])->orderBy('due', 'desc')->paginate(15);
+            //Status strings like ['completed', 'withdrawbefore24', 'withdrawafter24', 'timedout'] should ideally be constants to ensure consistency.
             $usertype = 'customer';
             return ['emergencyJobs' => $emergencyJobs, 'noramlJobs' => [], 'jobs' => $jobs, 'cuser' => $cuser, 'usertype' => $usertype, 'numpages' => 0, 'pagenum' => 0];
         } elseif ($cuser && $cuser->is('translator')) {
@@ -118,6 +119,8 @@ class BookingRepository extends BaseRepository
 //            $jobs['total'] = $totaljobs;
             return ['emergencyJobs' => $emergencyJobs, 'noramlJobs' => $noramlJobs, 'jobs' => $jobs, 'cuser' => $cuser, 'usertype' => $usertype, 'numpages' => $numpages, 'pagenum' => $pagenum];
         }
+
+        //If $cuser is null or doesn’t match customer or translator, the method doesn’t return a default response.
     }
 
     /**
@@ -283,42 +286,45 @@ class BookingRepository extends BaseRepository
      * @param $data
      * @return mixed
      */
-    public function storeJobEmail($data)
-    {
-        $user_type = $data['user_type'];
-        $job = Job::findOrFail(@$data['user_email_job_id']);
-        $job->user_email = @$data['user_email'];
-        $job->reference = isset($data['reference']) ? $data['reference'] : '';
-        $user = $job->user()->get()->first();
-        if (isset($data['address'])) {
-            $job->address = ($data['address'] != '') ? $data['address'] : $user->userMeta->address;
-            $job->instructions = ($data['instructions'] != '') ? $data['instructions'] : $user->userMeta->instructions;
-            $job->town = ($data['town'] != '') ? $data['town'] : $user->userMeta->city;
-        }
-        $job->save();
 
-        if (!empty($job->user_email)) {
-            $email = $job->user_email;
-            $name = $user->name;
-        } else {
-            $email = $user->email;
-            $name = $user->name;
-        }
-        $subject = 'Vi har mottagit er tolkbokning. Bokningsnr: #' . $job->id;
-        $send_data = [
-            'user' => $user,
-            'job'  => $job
-        ];
-        $this->mailer->send($email, $name, $subject, 'emails.job-created', $send_data);
+     public function storeJobEmail($data)
+     {
+         $job = Job::findOrFail($data['user_email_job_id'] ?? null);
+         $user = $job->user()->first();
 
-        $response['type'] = $user_type;
-        $response['job'] = $job;
-        $response['status'] = 'success';
-        $data = $this->jobToData($job);
-        Event::fire(new JobWasCreated($job, $data, '*'));
-        return $response;
+         if (!$user) {
+             return [
+                 'status' => 'error',
+                 'message' => 'User associated with the job not found.'
+             ];
+         }
 
-    }
+         $job->user_email = $data['user_email'] ?? $user->email;
+         $job->reference = $data['reference'] ?? '';
+         $job->address = $data['address'] ?? $user->userMeta->address;
+         $job->instructions = $data['instructions'] ?? $user->userMeta->instructions;
+         $job->town = $data['town'] ?? $user->userMeta->city;
+         $job->save();
+
+         $email = $job->user_email;
+         $name = $user->name;
+         $subject = 'Vi har mottagit er tolkbokning. Bokningsnr: #' . $job->id;
+
+         $send_data = [
+             'user' => $user,
+             'job'  => $job,
+         ];
+         $this->mailer->send($email, $name, $subject, 'emails.job-created', $send_data);
+
+         $dataForEvent = $this->jobToData($job);
+         Event::dispatch(new JobWasCreated($job, $dataForEvent, '*'));
+
+         return [
+             'type'   => $data['user_type'] ?? 'unknown',
+             'job'    => $job,
+             'status' => 'success',
+         ];
+     }
 
     /**
      * @param $job
@@ -381,96 +387,101 @@ class BookingRepository extends BaseRepository
      */
     public function jobEnd($post_data = array())
     {
-        $completeddate = date('Y-m-d H:i:s');
+        $completedDate = now()->format('Y-m-d H:i:s');
+        $subjectPrefix = 'Information om avslutad tolkning för bokningsnummer #';
+
         $jobid = $post_data["job_id"];
         $job_detail = Job::with('translatorJobRel')->find($jobid);
         $duedate = $job_detail->due;
+
         $start = date_create($duedate);
-        $end = date_create($completeddate);
+        $end = date_create($completedDate);
         $diff = date_diff($end, $start);
         $interval = $diff->h . ':' . $diff->i . ':' . $diff->s;
+
         $job = $job_detail;
-        $job->end_at = date('Y-m-d H:i:s');
+        $job->end_at = $completedDate;
         $job->status = 'completed';
         $job->session_time = $interval;
 
-        $user = $job->user()->get()->first();
-        if (!empty($job->user_email)) {
-            $email = $job->user_email;
-        } else {
-            $email = $user->email;
-        }
+        $user = $job->user()->first();
+        $email = $job->user_email ?: $user->email;
         $name = $user->name;
-        $subject = 'Information om avslutad tolkning för bokningsnummer # ' . $job->id;
-        $session_explode = explode(':', $job->session_time);
-        $session_time = $session_explode[0] . ' tim ' . $session_explode[1] . ' min';
+
+        $formattedSessionTime = function ($session_time) {
+            [$hours, $minutes, $seconds] = explode(':', $session_time);
+            return $hours . ' tim ' . $minutes . ' min';
+        };
+        $session_time = $formattedSessionTime($job->session_time);
+
+        $sendEmail = function ($email, $name, $subject, $data) {
+            $mailer = new AppMailer();
+            $mailer->send($email, $name, $subject, 'emails.session-ended', $data);
+        };
+
+        $subject = $subjectPrefix . $job->id;
         $data = [
             'user'         => $user,
             'job'          => $job,
             'session_time' => $session_time,
             'for_text'     => 'faktura'
         ];
-        $mailer = new AppMailer();
-        $mailer->send($email, $name, $subject, 'emails.session-ended', $data);
+        $sendEmail($email, $name, $subject, $data);
 
         $job->save();
 
-        $tr = $job->translatorJobRel->where('completed_at', Null)->where('cancel_at', Null)->first();
-
+        $tr = $job->translatorJobRel->where('completed_at', null)->where('cancel_at', null)->first();
         Event::fire(new SessionEnded($job, ($post_data['userid'] == $job->user_id) ? $tr->user_id : $job->user_id));
 
         $user = $tr->user()->first();
         $email = $user->email;
         $name = $user->name;
-        $subject = 'Information om avslutad tolkning för bokningsnummer # ' . $job->id;
+        $subject = $subjectPrefix . $job->id;
         $data = [
             'user'         => $user,
             'job'          => $job,
             'session_time' => $session_time,
             'for_text'     => 'lön'
         ];
-        $mailer = new AppMailer();
-        $mailer->send($email, $name, $subject, 'emails.session-ended', $data);
+        $sendEmail($email, $name, $subject, $data);
 
-        $tr->completed_at = $completeddate;
+        $tr->completed_at = $completedDate;
         $tr->completed_by = $post_data['userid'];
         $tr->save();
     }
+
 
     /**
      * Function to get all Potential jobs of user with his ID
      * @param $user_id
      * @return array
      */
-    public function getPotentialJobIdsWithUserId($user_id)
-    {
-        $user_meta = UserMeta::where('user_id', $user_id)->first();
-        $translator_type = $user_meta->translator_type;
-        $job_type = 'unpaid';
-        if ($translator_type == 'professional')
-            $job_type = 'paid';   /*show all jobs for professionals.*/
-        else if ($translator_type == 'rwstranslator')
-            $job_type = 'rws';  /* for rwstranslator only show rws jobs. */
-        else if ($translator_type == 'volunteer')
-            $job_type = 'unpaid';  /* for volunteers only show unpaid jobs. */
 
-        $languages = UserLanguages::where('user_id', '=', $user_id)->get();
-        $userlanguage = collect($languages)->pluck('lang_id')->all();
-        $gender = $user_meta->gender;
-        $translator_level = $user_meta->translator_level;
-        $job_ids = Job::getJobs($user_id, $job_type, 'pending', $userlanguage, $gender, $translator_level);
-        foreach ($job_ids as $k => $v)     // checking translator town
-        {
-            $job = Job::find($v->id);
-            $jobuserid = $job->user_id;
-            $checktown = Job::checkTowns($jobuserid, $user_id);
-            if (($job->customer_phone_type == 'no' || $job->customer_phone_type == '') && $job->customer_physical_type == 'yes' && $checktown == false) {
-                unset($job_ids[$k]);
-            }
-        }
-        $jobs = TeHelper::convertJobIdsInObjs($job_ids);
-        return $jobs;
-    }
+     public function getPotentialJobIdsWithUserId($user_id)
+     {
+         $user_meta = UserMeta::where('user_id', $user_id)->first();
+
+         $job_type = [
+             'professional' => 'paid',
+             'rwstranslator' => 'rws',
+             'volunteer' => 'unpaid',
+         ][$user_meta->translator_type] ?? 'unpaid';
+
+         $userlanguage = UserLanguages::where('user_id', $user_id)->pluck('lang_id')->all();
+
+         $job_ids = Job::getJobs($user_id, $job_type, 'pending', $userlanguage, $user_meta->gender, $user_meta->translator_level);
+
+         $job_details = Job::whereIn('id', collect($job_ids)->pluck('id'))->get();
+
+         $filtered_job_ids = $job_details->filter(function ($job) use ($user_id) {
+             $checktown = Job::checkTowns($job->user_id, $user_id);
+             return !($job->customer_phone_type == 'no' || $job->customer_phone_type == '') ||
+                    $job->customer_physical_type != 'yes' ||
+                    $checktown;
+         })->pluck('id');
+
+         return TeHelper::convertJobIdsInObjs($filtered_job_ids);
+     }
 
     /**
      * @param $job
@@ -610,7 +621,6 @@ class BookingRepository extends BaseRepository
      */
     public function sendPushNotificationToSpecificUsers($users, $job_id, $data, $msg_text, $is_need_delay)
     {
-
         $logger = new Logger('push_logger');
 
         $logger->pushHandler(new StreamHandler(storage_path('logs/push/laravel-' . date('Y-m-d') . '.log'), Logger::DEBUG));
@@ -657,6 +667,7 @@ class BookingRepository extends BaseRepository
         }
         $fields = json_encode($fields);
         $ch = curl_init();
+        // To improve readability and avoid repetition, the curl logic should extracted into a reusable helper function.
         curl_setopt($ch, CURLOPT_URL, "https://onesignal.com/api/v1/notifications");
         curl_setopt($ch, CURLOPT_HTTPHEADER, array('Content-Type: application/json', $onesignalRestAuthKey));
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
@@ -1022,14 +1033,12 @@ class BookingRepository extends BaseRepository
         $data = array();
         $data['notification_type'] = 'session_start_remind';
         $due_explode = explode(' ', $due);
-        if ($job->customer_physical_type == 'yes')
-            $msg_text = array(
-                "en" => 'Detta är en påminnelse om att du har en ' . $language . 'tolkning (på plats i ' . $job->town . ') kl ' . $due_explode[1] . ' på ' . $due_explode[0] . ' som vara i ' . $duration . ' min. Lycka till och kom ihåg att ge feedback efter utförd tolkning!'
-            );
-        else
-            $msg_text = array(
-                "en" => 'Detta är en påminnelse om att du har en ' . $language . 'tolkning (telefon) kl ' . $due_explode[1] . ' på ' . $due_explode[0] . ' som vara i ' . $duration . ' min.Lycka till och kom ihåg att ge feedback efter utförd tolkning!'
-            );
+         // The message construction logic is duplicated for physical and phone-based jobs. Used a ternary operator for this.
+        $msg_text = [
+            "en" => 'Detta är en påminnelse om att du har en ' . $language . 'tolkning (' .
+                ($job->customer_physical_type == 'yes' ? 'på plats i ' . $job->town : 'telefon') . ') kl ' .
+                $due_explode[1] . ' på ' . $due_explode[0] . ' som vara i ' . $duration . ' min. Lycka till och kom ihåg att ge feedback efter utförd tolkning!'
+        ];
 
         if ($this->bookingRepository->isNeedToSendPush($user->id)) {
             $users_array = array($user);
@@ -1093,6 +1102,7 @@ class BookingRepository extends BaseRepository
                     'job'  => $job
                 ];
                 $this->mailer->send($email, $name, $subject, 'emails.job-cancel-translator', $dataEmail);
+                // The method assumes that the mailer will always succeed without errors. If the mailer fails, there is no fallback or error logging.
             }
             $job->save();
             return true;
@@ -1191,7 +1201,7 @@ class BookingRepository extends BaseRepository
 
             $this->mailer->send($email, $name, $subject, 'emails.job-changed-translator-old-translator', $data);
         }
-
+// The $user, $name, and $email variables are assigned multiple times for different scenarios. This could be consolidated into a helper function or reused with a clearer flow.
         $user = $new_translator->user;
         $name = $user->name;
         $email = $user->email;
@@ -1229,7 +1239,7 @@ class BookingRepository extends BaseRepository
             'old_time' => $old_time
         ];
         $this->mailer->send($translator->email, $translator->name, $subject, 'emails.job-changed-date', $data);
-
+        // The email sending logic is repeated for the user and translator. This creates redundancy and makes the code less maintainable.
     }
 
     /**
@@ -1430,6 +1440,7 @@ class BookingRepository extends BaseRepository
     {
         $adminemail = config('app.admin_email');
         $adminSenderEmail = config('app.admin_sender_email');
+        // un used variables
         $job = Job::findOrFail($job_id);
         $response = array();
 
@@ -1494,6 +1505,7 @@ class BookingRepository extends BaseRepository
         */
         $cuser = $user;
         $job_id = $data['job_id'];
+        //The data array and its keys (like job_id) are used without sufficient checks to confirm their existence. This could lead to Undefined Index errors if the job_id key is missing.
         $job = Job::findOrFail($job_id);
         $translator = Job::getJobsAssignedTranslatorDetail($job);
         if ($cuser->is('customer')) {
@@ -1552,6 +1564,7 @@ class BookingRepository extends BaseRepository
                 $response['message'] = 'Du kan inte avboka en bokning som sker inom 24 timmar genom DigitalTolk. Vänligen ring på +46 73 75 86 865 och gör din avbokning over telefon. Tack!';
             }
         }
+        // The notification logic for both customers and translators is nearly identical but repeated in both the if and else blocks. This increases maintenance difficulty.
         return $response;
     }
 
@@ -1567,7 +1580,7 @@ class BookingRepository extends BaseRepository
             $job_type = 'rws';  /* for rwstranslator only show rws jobs. */
         else if ($translator_type == 'volunteer')
             $job_type = 'unpaid';  /* for volunteers only show unpaid jobs. */
-
+// Repeated code for job type assignments (paid, rws, unpaid) based on translator_type.
         $languages = UserLanguages::where('user_id', '=', $cuser->id)->get();
         $userlanguage = collect($languages)->pluck('lang_id')->all();
         $gender = $cuser_meta->gender;

@@ -24,7 +24,7 @@ class BookingController extends Controller
      * BookingController constructor.
      * @param BookingRepository $bookingRepository
      */
-    public function __construct(BookingRepository $bookingRepository)
+    public function __construct(BookingRepository $bookingRepository) // The BookingRepository is injected into the controller that is very good approach.
     {
         $this->repository = $bookingRepository;
     }
@@ -35,6 +35,7 @@ class BookingController extends Controller
      */
     public function index(Request $request)
     {
+        //No input validation is performed in methods.
         if($user_id = $request->get('user_id')) {
 
             $response = $this->repository->getUsersJobs($user_id);
@@ -47,7 +48,7 @@ class BookingController extends Controller
 
         return response($response);
     }
-
+// Methods like store, update, and endJob assume that operations will succeed, but they do not handle errors or exceptions.
     /**
      * @param $id
      * @return mixed
@@ -66,7 +67,7 @@ class BookingController extends Controller
     public function store(Request $request)
     {
         $data = $request->all();
-
+    // No input validation is performed in methods.
         $response = $this->repository->store($request->__authenticatedUser, $data);
 
         return response($response);
@@ -81,6 +82,7 @@ class BookingController extends Controller
     public function update($id, Request $request)
     {
         $data = $request->all();
+        // No input validation is performed in methods.
         $cuser = $request->__authenticatedUser;
         $response = $this->repository->updateJob($id, array_except($data, ['_token', 'submit']), $cuser);
 
@@ -222,7 +224,7 @@ class BookingController extends Controller
         } else {
             $flagged = 'no';
         }
-        
+
         if ($data['manually_handled'] == 'true') {
             $manually_handled = 'yes';
         } else {
